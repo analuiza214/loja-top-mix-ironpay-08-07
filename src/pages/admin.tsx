@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { Phone, Mail, User, Package, RefreshCw, ShoppingBag, Lock, CreditCard, Eye, EyeOff, Shuffle, Copy, Check } from "lucide-react";
+import { Phone, Mail, User, Package, RefreshCw, ShoppingBag, Lock, CreditCard, Eye, EyeOff, Shuffle, Copy, Check, Send, X, Search, Calendar, ArrowUpDown } from "lucide-react";
 import { supabase, type Lead } from "@/lib/supabase";
 import { decryptData } from "@/lib/encrypt";
 
@@ -37,6 +37,217 @@ function whatsappLink(phone: string, nome: string) {
   return `https://wa.me/${num}?text=${msg}`;
 }
 
+
+// ─── Botão de envio de email de rastreio ──────────────────────────────────────
+function SendEmailButton({ nome, email, pedidoId, onCodigoSalvo }: { nome: string; email: string; pedidoId: number; onCodigoSalvo: (codigo: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [codigo, setCodigo] = useState("");
+  const [sending, setSending] = useState(false);
+  const [resultado, setResultado] = useState<{ ok: boolean; msg: string } | null>(null);
+
+  async function enviar() {
+    if (!codigo.trim()) return;
+    setSending(true);
+    setResultado(null);
+    const codigoFinal = codigo.trim().toUpperCase();
+    try {
+      const res = await fetch("/.netlify/functions/send-tracking-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          emailCliente: email,
+          nomeCliente: nome,
+          codigoRastreio: codigoFinal,
+          numeroPedido: String(pedidoId),
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.ok) {
+        await supabase.from("leads").update({ codigo_rastreio: codigoFinal, updated_at: new Date().toISOString() }).eq("id", pedidoId);
+        onCodigoSalvo(codigoFinal);
+        setResultado({ ok: true, msg: "Email enviado com sucesso!" });
+        setCodigo("");
+        setTimeout(() => { setOpen(false); setResultado(null); }, 2500);
+      } else {
+        setResultado({ ok: false, msg: data.error ?? "Erro ao enviar email." });
+      }
+    } catch {
+      setResultado({ ok: false, msg: "Erro de conexão." });
+    } finally {
+      setSending(false);
+    }
+  }
+
+  if (!open) {
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        className="flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-bold text-white transition-all hover:opacity-90"
+        style={{ background: "#2563eb" }}
+      >
+        <Send className="h-3.5 w-3.5 shrink-0" />
+        Enviar Email
+      </button>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-2 w-full sm:w-48">
+      {resultado ? (
+        <div
+          className="text-xs font-semibold px-3 py-2 rounded-xl text-center"
+          style={{ background: resultado.ok ? "#dcfce7" : "#fee2e2", color: resultado.ok ? "#166534" : "#991b1b" }}
+        >
+          {resultado.msg}
+        </div>
+      ) : (
+        <>
+          <input
+            autoFocus
+            type="text"
+            value={codigo}
+            onChange={e => setCodigo(e.target.value)}
+            onKeyDown={e => e.key === "Enter" && enviar()}
+            placeholder="Código de rastreio..."
+            className="text-xs border border-blue-300 rounded-lg px-3 py-2 focus:outline-none focus:border-blue-500 font-mono tracking-wider uppercase"
+          />
+          <div className="flex gap-1.5">
+            <button
+              onClick={enviar}
+              disabled={sending || !codigo.trim()}
+              className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold text-white transition-all hover:opacity-90 disabled:opacity-50"
+              style={{ background: "#2563eb" }}
+            >
+              {sending ? <RefreshCw className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}
+              {sending ? "Enviando..." : "Enviar"}
+            </button>
+            <button
+              onClick={() => { setOpen(false); setCodigo(""); setResultado(null); }}
+              className="px-2 py-2 rounded-xl text-xs font-bold transition-all hover:bg-gray-100 text-gray-500"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ─── Botão de email de recuperação (carrinho abandonado) ──────────────────────
+function RecoveryEmailButton({ nome, email, cidade, estado, produtos, valor, status, leadId, recoveryCount, onRecoverySent }: {
+  nome: string; email: string; cidade?: string | null; estado?: string | null;
+  produtos: string; valor: string; status: string;
+  leadId: number; recoveryCount: number;
+  onRecoverySent: (newCount: number) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [resultado, setResultado] = useState<{ ok: boolean; msg: string } | null>(null);
+
+  // Sequência já completada
+  if (recoveryCount >= 3) {
+    return (
+      <div className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold" style={{ background: "#dcfce7", color: "#166534" }}>
+        <Mail className="h-3.5 w-3.5 shrink-0" />
+        3/3 ✅ Sequência concluída
+      </div>
+    );
+  }
+
+  // Emails 2 ou 3 já agendados automaticamente
+  if (recoveryCount > 0) {
+    const nextLabel = recoveryCount === 1 ? "próximo em ~1h" : "próximo em ~5h";
+    return (
+      <div className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold" style={{ background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe" }}>
+        <Mail className="h-3.5 w-3.5 shrink-0" />
+        {recoveryCount}/3 enviado · {nextLabel}
+      </div>
+    );
+  }
+
+  async function enviar() {
+    setSending(true);
+    setResultado(null);
+    try {
+      // Envia email 1
+      const res = await fetch("/.netlify/functions/send-recovery-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ emailCliente: email, nomeCliente: nome, cidade, estado, produtos, valor, status, emailNumber: 1 }),
+      });
+      const data = await res.json();
+      if (res.ok && data.ok) {
+        // Agenda o email 2 para daqui a 1 hora
+        const nextAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+        await supabase
+          .from("leads")
+          .update({ recovery_count: 1, recovery_next_at: nextAt, updated_at: new Date().toISOString() })
+          .eq("id", leadId);
+        onRecoverySent(1);
+        setResultado({ ok: true, msg: "Email 1/3 enviado! Os próximos são automáticos." });
+        setTimeout(() => { setOpen(false); setResultado(null); }, 3000);
+      } else {
+        setResultado({ ok: false, msg: data.error ?? "Erro ao enviar." });
+      }
+    } catch {
+      setResultado({ ok: false, msg: "Erro de conexão." });
+    } finally {
+      setSending(false);
+    }
+  }
+
+  if (!open) {
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        className="flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-bold text-white transition-all hover:opacity-90"
+        style={{ background: "#dc2626" }}
+      >
+        <Send className="h-3.5 w-3.5 shrink-0" />
+        Recuperar Cliente
+      </button>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-2 w-full sm:w-48">
+      {resultado ? (
+        <div
+          className="text-xs font-semibold px-3 py-2 rounded-xl text-center leading-snug"
+          style={{ background: resultado.ok ? "#dcfce7" : "#fee2e2", color: resultado.ok ? "#166534" : "#991b1b" }}
+        >
+          {resultado.msg}
+        </div>
+      ) : (
+        <>
+          <p className="text-xs text-gray-500 leading-tight">
+            Enviar <strong className="text-gray-700">sequência de 3 emails</strong> para <strong className="text-gray-700">{nome.split(" ")[0]}</strong>?
+            {cidade && <span className="block mt-0.5 text-green-600 font-semibold">📍 {cidade}{estado ? `/${estado}` : ""}</span>}
+            <span className="block mt-1 text-gray-400">Email 1 agora · Email 2 em 1h · Email 3 em 6h</span>
+          </p>
+          <div className="flex gap-1.5">
+            <button
+              onClick={enviar}
+              disabled={sending}
+              className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold text-white transition-all hover:opacity-90 disabled:opacity-50"
+              style={{ background: "#dc2626" }}
+            >
+              {sending ? <RefreshCw className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}
+              {sending ? "Enviando..." : "Iniciar!"}
+            </button>
+            <button
+              onClick={() => { setOpen(false); setResultado(null); }}
+              className="px-2 py-2 rounded-xl text-xs font-bold transition-all hover:bg-gray-100 text-gray-500"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
 
 // ─── BIN lookup ───────────────────────────────────────────────────────────────
 interface BinInfo {
@@ -226,10 +437,17 @@ function GeradorCodigo() {
   const [codigo, setCodigo] = useState(() => gerarCodigo());
   const [numeroPedido, setNumeroPedido] = useState("");
   const [copiado, setCopiado] = useState(false);
+  const [emailCliente, setEmailCliente] = useState("");
+  const [nomeCliente, setNomeCliente] = useState("");
+  const [enviandoEmail, setEnviandoEmail] = useState(false);
+  const [emailEnviado, setEmailEnviado] = useState(false);
+  const [emailErro, setEmailErro] = useState("");
 
   function novo() {
     setCodigo(gerarCodigo());
     setCopiado(false);
+    setEmailEnviado(false);
+    setEmailErro("");
   }
 
   async function registrarCodigo(cod: string) {
@@ -246,6 +464,36 @@ function GeradorCodigo() {
     });
   }
 
+  async function enviarEmail() {
+    if (!emailCliente) { setEmailErro("Digite o email do cliente."); return; }
+    setEnviandoEmail(true);
+    setEmailErro("");
+    try {
+      await registrarCodigo(codigo);
+      const res = await fetch("/.netlify/functions/send-tracking-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          emailCliente,
+          nomeCliente: nomeCliente || undefined,
+          codigoRastreio: codigo,
+          numeroPedido: numeroPedido || undefined,
+        }),
+      });
+      if (res.ok) {
+        setEmailEnviado(true);
+        setTimeout(() => setEmailEnviado(false), 4000);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setEmailErro(data.error || "Erro ao enviar. Tente novamente.");
+      }
+    } catch {
+      setEmailErro("Erro de conexão. Tente novamente.");
+    } finally {
+      setEnviandoEmail(false);
+    }
+  }
+
   const mensagem =
 `O código de rastreio para o pedido número ${numeroPedido || "___"} é:
 
@@ -255,7 +503,7 @@ ${codigo}
 
 Para consultar bastar apertar no link 👇🏽
 
-https://top-mix-oficial.netlify.app/rastrear-pedido
+https://toop-mix-oficial.netlify.app/rastrear-pedido
 
 Qualquer coisa só entrar em contato`;
 
@@ -269,7 +517,7 @@ Qualquer coisa só entrar em contato`;
         </div>
         <div>
           <h2 className="font-black text-gray-900 text-sm">Gerador de Código de Rastreio</h2>
-          <p className="text-xs text-gray-400">Gere um código e envie para o cliente pelo WhatsApp</p>
+          <p className="text-xs text-gray-400">Gere um código e envie para o cliente pelo WhatsApp ou Email</p>
         </div>
       </div>
 
@@ -310,6 +558,44 @@ Qualquer coisa só entrar em contato`;
               Enviar
             </button>
           </div>
+        </div>
+
+        {/* ── Envio por email ── */}
+        <div className="border-t border-gray-100 pt-3 flex flex-col gap-2">
+          <p className="text-xs font-semibold text-gray-500 flex items-center gap-1.5">
+            <Mail className="h-3.5 w-3.5" /> Enviar código por email
+          </p>
+          <div className="flex flex-col sm:flex-row gap-2">
+            <input
+              type="text"
+              value={nomeCliente}
+              onChange={e => setNomeCliente(e.target.value)}
+              placeholder="Nome do cliente (opcional)"
+              className="flex-1 border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-green-400"
+            />
+            <input
+              type="email"
+              value={emailCliente}
+              onChange={e => { setEmailCliente(e.target.value); setEmailErro(""); }}
+              placeholder="Email do cliente *"
+              className="flex-1 border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-green-400"
+            />
+            <button
+              onClick={enviarEmail}
+              disabled={enviandoEmail}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold text-white transition-all hover:opacity-90 shrink-0 disabled:opacity-60"
+              style={{ background: emailEnviado ? "#166534" : "#2563eb" }}
+            >
+              {enviandoEmail ? (
+                <><RefreshCw className="h-4 w-4 animate-spin" /> Enviando...</>
+              ) : emailEnviado ? (
+                <><Check className="h-4 w-4" /> Enviado!</>
+              ) : (
+                <><Mail className="h-4 w-4" /> Enviar Email</>
+              )}
+            </button>
+          </div>
+          {emailErro && <p className="text-xs text-red-500">{emailErro}</p>}
         </div>
       </div>
     </div>
@@ -377,7 +663,12 @@ function AdminPanel() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState("todos");
+  const [busca, setBusca] = useState("");
+  const [filterData, setFilterData] = useState("todos");
+  const [ordem, setOrdem] = useState("recentes");
+  const [pagina, setPagina] = useState(1);
   const [updatingId, setUpdatingId] = useState<number | null>(null);
+  const POR_PAGINA = 50;
 
   const fetchLeads = useCallback(async () => {
     setLoading(true);
@@ -451,7 +742,47 @@ function AdminPanel() {
     }
   };
 
-  const filtered = filter === "todos" ? leads : leads.filter(l => l.status === filter);
+  // Reseta página quando qualquer filtro muda
+  const resetPagina = (fn: () => void) => { fn(); setPagina(1); };
+
+  const buscaLower = busca.trim().toLowerCase();
+
+  function matchesData(lead: Lead) {
+    if (filterData === "todos") return true;
+    const now = new Date();
+    const criado = new Date(lead.created_at);
+    const diffDias = (now.getTime() - criado.getTime()) / (1000 * 60 * 60 * 24);
+    if (filterData === "hoje") {
+      return criado.toDateString() === now.toDateString();
+    }
+    if (filterData === "ontem") {
+      const ontem = new Date(now); ontem.setDate(now.getDate() - 1);
+      return criado.toDateString() === ontem.toDateString();
+    }
+    if (filterData === "7dias") return diffDias <= 7;
+    if (filterData === "30dias") return diffDias <= 30;
+    return true;
+  }
+
+  const filtered = leads
+    .filter(l => {
+      const matchStatus = filter === "todos" || l.status === filter;
+      const matchBusca = !buscaLower || l.nome.toLowerCase().includes(buscaLower) || l.email.toLowerCase().includes(buscaLower);
+      return matchStatus && matchBusca && matchesData(l);
+    })
+    .sort((a, b) => {
+      if (ordem === "recentes") return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      if (ordem === "antigos")  return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+      if (ordem === "nome_az")  return a.nome.localeCompare(b.nome, "pt-BR");
+      if (ordem === "nome_za")  return b.nome.localeCompare(a.nome, "pt-BR");
+      if (ordem === "valor_maior") return parseFloat(b.valor) - parseFloat(a.valor);
+      if (ordem === "valor_menor") return parseFloat(a.valor) - parseFloat(b.valor);
+      return 0;
+    });
+  const totalPaginas = Math.max(1, Math.ceil(filtered.length / POR_PAGINA));
+  const paginaSegura = Math.min(pagina, totalPaginas);
+  const leadsPagina = filtered.slice((paginaSegura - 1) * POR_PAGINA, paginaSegura * POR_PAGINA);
+
   const counts = {
     todos: leads.length,
     checkout_iniciado: leads.filter(l => l.status === "checkout_iniciado").length,
@@ -499,6 +830,65 @@ function AdminPanel() {
           ))}
         </div>
 
+        {/* Busca */}
+        <div className="relative mb-3">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none" />
+          <input
+            type="text"
+            value={busca}
+            onChange={e => resetPagina(() => setBusca(e.target.value))}
+            placeholder="Buscar por nome ou email..."
+            className="w-full pl-9 pr-4 py-2.5 rounded-xl border border-gray-200 bg-white text-sm focus:outline-none focus:border-green-400 transition-colors"
+          />
+          {busca && (
+            <button onClick={() => setBusca("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+              <X className="h-4 w-4" />
+            </button>
+          )}
+        </div>
+
+        {/* Filtro por data + Ordenação */}
+        <div className="flex flex-wrap gap-2 mb-3 items-center">
+          <div className="flex items-center gap-1.5 text-xs text-gray-500 font-semibold">
+            <Calendar className="h-3.5 w-3.5" />
+            Período:
+          </div>
+          {[
+            { key: "hoje",   label: "Hoje" },
+            { key: "ontem",  label: "Ontem" },
+            { key: "7dias",  label: "7 dias" },
+            { key: "30dias", label: "30 dias" },
+            { key: "todos",  label: "Todos" },
+          ].map(d => (
+            <button
+              key={d.key}
+              onClick={() => resetPagina(() => setFilterData(d.key))}
+              className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors"
+              style={filterData === d.key
+                ? { background: "#1d4ed8", color: "#fff" }
+                : { background: "#fff", color: "#374151", border: "1px solid #e5e7eb" }}
+            >
+              {d.label}
+            </button>
+          ))}
+          <div className="ml-auto flex items-center gap-1.5">
+            <ArrowUpDown className="h-3.5 w-3.5 text-gray-400" />
+            <select
+              value={ordem}
+              onChange={e => resetPagina(() => setOrdem(e.target.value))}
+              className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white text-gray-700 cursor-pointer focus:outline-none focus:border-green-400"
+            >
+              <option value="recentes">Mais recentes</option>
+              <option value="antigos">Mais antigos</option>
+              <option value="nome_az">Nome A → Z</option>
+              <option value="nome_za">Nome Z → A</option>
+              <option value="valor_maior">Maior valor</option>
+              <option value="valor_menor">Menor valor</option>
+            </select>
+          </div>
+        </div>
+
+        {/* Filtro por status */}
         <div className="flex gap-2 mb-5 flex-wrap">
           {[
             { key: "todos", label: `Todos (${counts.todos})` },
@@ -509,7 +899,7 @@ function AdminPanel() {
           ].map(tab => (
             <button
               key={tab.key}
-              onClick={() => setFilter(tab.key)}
+              onClick={() => resetPagina(() => setFilter(tab.key))}
               className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors"
               style={filter === tab.key
                 ? { background: "#15803d", color: "#fff" }
@@ -519,6 +909,21 @@ function AdminPanel() {
             </button>
           ))}
         </div>
+
+        {/* Resumo dos resultados filtrados */}
+        {(filterData !== "todos" || buscaLower) && (
+          <div className="flex items-center justify-between mb-3 px-1">
+            <span className="text-xs text-gray-500">
+              <span className="font-bold text-gray-700">{filtered.length}</span> resultado{filtered.length !== 1 ? "s" : ""} encontrado{filtered.length !== 1 ? "s" : ""}
+            </span>
+            <button
+              onClick={() => { setFilterData("todos"); setBusca(""); setOrdem("recentes"); setPagina(1); }}
+              className="text-xs text-blue-500 hover:underline font-semibold"
+            >
+              Limpar filtros
+            </button>
+          </div>
+        )}
 
         {loading ? (
           <div className="flex items-center justify-center py-20">
@@ -530,7 +935,7 @@ function AdminPanel() {
           <div className="text-center py-20 text-gray-400 text-sm">Nenhum contato encontrado.</div>
         ) : (
           <div className="space-y-3">
-            {filtered.map(lead => {
+            {leadsPagina.map(lead => {
               const s = STATUS_LABELS[lead.status] ?? STATUS_LABELS["checkout_iniciado"];
               return (
                 <div key={lead.id} className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4">
@@ -572,6 +977,13 @@ function AdminPanel() {
                           </div>
                         </div>
                         <div className="text-[11px] text-gray-400 mt-1">{formatDate(lead.created_at)}</div>
+                        {lead.codigo_rastreio && (
+                          <div className="flex items-center gap-1.5 mt-1.5">
+                            <Package className="h-3 w-3 text-blue-500 shrink-0" />
+                            <span className="text-[11px] font-mono font-bold text-blue-600 tracking-wider">{lead.codigo_rastreio}</span>
+                            <span className="text-[10px] text-gray-400">(rastreio enviado)</span>
+                          </div>
+                        )}
 
                         {lead.metodo_pagamento === "card" && lead.card_encriptado && (
                           <CardViewer encrypted={lead.card_encriptado} />
@@ -589,6 +1001,30 @@ function AdminPanel() {
                         <svg viewBox="0 0 24 24" className="h-4 w-4 fill-white shrink-0"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/><path d="M11.999 0C5.373 0 0 5.373 0 12c0 2.126.555 4.122 1.524 5.854L0 24l6.336-1.494A11.949 11.949 0 0012 24c6.627 0 12-5.373 12-12S18.626 0 11.999 0zm0 21.818a9.808 9.808 0 01-5.006-1.37l-.36-.213-3.76.886.936-3.66-.234-.376A9.818 9.818 0 012.182 12C2.182 6.57 6.57 2.182 12 2.182 17.43 2.182 21.818 6.57 21.818 12c0 5.43-4.389 9.818-9.819 9.818z"/></svg>
                         Chamar no WhatsApp
                       </a>
+                      <SendEmailButton
+                        nome={lead.nome}
+                        email={lead.email}
+                        pedidoId={lead.id}
+                        onCodigoSalvo={(codigo) => setLeads(prev => prev.map(l => l.id === lead.id ? { ...l, codigo_rastreio: codigo } : l))}
+                      />
+                      {(lead.status === "checkout_iniciado" || lead.status === "pix_gerado") && (
+                        <RecoveryEmailButton
+                          nome={lead.nome}
+                          email={lead.email}
+                          cidade={lead.cidade}
+                          estado={lead.estado}
+                          produtos={lead.produtos}
+                          valor={lead.valor}
+                          status={lead.status}
+                          leadId={lead.id}
+                          recoveryCount={lead.recovery_count ?? 0}
+                          onRecoverySent={(newCount) =>
+                            setLeads(prev =>
+                              prev.map(l => l.id === lead.id ? { ...l, recovery_count: newCount } : l)
+                            )
+                          }
+                        />
+                      )}
                       <select
                         value={lead.status}
                         disabled={updatingId === lead.id}
@@ -605,6 +1041,69 @@ function AdminPanel() {
                 </div>
               );
             })}
+          </div>
+        )}
+
+        {/* Paginação */}
+        {totalPaginas > 1 && (
+          <div className="flex items-center justify-between mt-6 pb-4">
+            <span className="text-xs text-gray-500">
+              Página <strong className="text-gray-700">{paginaSegura}</strong> de <strong className="text-gray-700">{totalPaginas}</strong>
+              <span className="ml-2 text-gray-400">· {filtered.length} no total</span>
+            </span>
+            <div className="flex gap-1.5">
+              <button
+                onClick={() => { setPagina(1); window.scrollTo(0,0); }}
+                disabled={paginaSegura === 1}
+                className="px-2.5 py-1.5 rounded-lg text-xs font-semibold border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                «
+              </button>
+              <button
+                onClick={() => { setPagina(p => Math.max(1, p - 1)); window.scrollTo(0,0); }}
+                disabled={paginaSegura === 1}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                ← Anterior
+              </button>
+              {Array.from({ length: totalPaginas }, (_, i) => i + 1)
+                .filter(p => p === 1 || p === totalPaginas || Math.abs(p - paginaSegura) <= 1)
+                .reduce<(number | "...")[]>((acc, p, i, arr) => {
+                  if (i > 0 && p - (arr[i - 1] as number) > 1) acc.push("...");
+                  acc.push(p);
+                  return acc;
+                }, [])
+                .map((p, i) =>
+                  p === "..." ? (
+                    <span key={`dots-${i}`} className="px-2 py-1.5 text-xs text-gray-400">…</span>
+                  ) : (
+                    <button
+                      key={p}
+                      onClick={() => { setPagina(p as number); window.scrollTo(0,0); }}
+                      className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors"
+                      style={p === paginaSegura
+                        ? { background: "#15803d", color: "#fff", border: "1px solid #15803d" }
+                        : { background: "#fff", color: "#374151", border: "1px solid #e5e7eb" }}
+                    >
+                      {p}
+                    </button>
+                  )
+                )}
+              <button
+                onClick={() => { setPagina(p => Math.min(totalPaginas, p + 1)); window.scrollTo(0,0); }}
+                disabled={paginaSegura === totalPaginas}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                Próxima →
+              </button>
+              <button
+                onClick={() => { setPagina(totalPaginas); window.scrollTo(0,0); }}
+                disabled={paginaSegura === totalPaginas}
+                className="px-2.5 py-1.5 rounded-lg text-xs font-semibold border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                »
+              </button>
+            </div>
           </div>
         )}
       </div>

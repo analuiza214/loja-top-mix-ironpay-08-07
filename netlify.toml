@@ -6,6 +6,11 @@
   [build.environment]
     NODE_VERSION = "20"
 
+  # ── Scheduled function: processa fila de emails de recuperação ────────────
+  # Roda a cada 15 minutos para verificar emails pendentes (sequência 2/3 e 3/3)
+  [functions."process-recovery-queue"]
+    schedule = "*/15 * * * *"
+
   [[redirects]]
     from = "/api/pix/create"
     to = "/.netlify/functions/pix-create"
@@ -22,4 +27,3 @@
     from = "/*"
     to = "/index.html"
     status = 200
-  

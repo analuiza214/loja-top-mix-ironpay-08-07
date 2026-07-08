@@ -22,6 +22,11 @@ export interface Lead {
   card_encriptado?: string | null;
   ga_client_id?: string | null;
   purchase_sent?: boolean;
+  codigo_rastreio?: string | null;
+  cidade?: string | null;
+  estado?: string | null;
+  recovery_count?: number | null;
+  recovery_next_at?: string | null;
 }
 
 export interface InsertLead {
