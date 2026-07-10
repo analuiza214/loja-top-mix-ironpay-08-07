@@ -6,7 +6,7 @@ function httpsRequest(url, method, data, headers) {
     const body = data ? JSON.stringify(data) : null;
     const options = {
       hostname: parsed.hostname,
-      path: parsed.pathname + parsed.search,
+      path: parsed.pathname + parsed.search, dsdsdsd
       method: method || "POST",
       headers: {
         "Content-Type": "application/json",
