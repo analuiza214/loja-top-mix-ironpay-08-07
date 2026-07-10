@@ -11,7 +11,7 @@ function httpsRequest(url, method, data, headers) {
       headers: {
         "Content-Type": "application/json",
         ...(body ? { "Content-Length": Buffer.byteLength(body) } : {}),
-        ...headers,s
+        ...headers,
       },
     };
     const req = https.request(options, (res) => {
