@@ -26,17 +26,15 @@ function addDays(date: Date, days: number): Date {
   return new Date(date.getTime() + days * 24 * 60 * 60 * 1000);
 }
 
-// ── Busca a data de origem e nome do cliente no Supabase ─────────────────────
-async function getDataOrigem(codigo: string): Promise<{ origem: Date; nome: string | null } | null> {
+// ── Busca a data de origem no Supabase ────────────────────────────────────────
+async function getDataOrigem(codigo: string): Promise<Date | null> {
   const { data } = await supabase
     .from("rastreio_origem")
     .select("origem_at")
     .eq("codigo", codigo)
     .maybeSingle();
 
-  if (data?.origem_at) {
-    return { origem: new Date(data.origem_at), nome: null };
-  }
+  if (data?.origem_at) return new Date(data.origem_at);
   return null;
 }
 
@@ -226,8 +224,8 @@ export default function RastrearPedido() {
   const [taxaCopied, setTaxaCopied] = useState(false);
   const [taxaPaga, setTaxaPaga] = useState(false);
 
-  // nome do cliente (vindo do rastreio_origem)
-  const [nomeCliente, setNomeCliente] = useState<string | null>(null);
+  // nome exibido na linha do tempo de reenvio
+  const [nomeCliente] = useState<string | null>(null);
 
   // estados do comprovante
   const [comprovanteFase, setComprovanteFase] = useState<"idle" | "upload" | "enviado">("idle");
@@ -325,14 +323,13 @@ export default function RastrearPedido() {
 
     setLoading(true);
     try {
-      const result = await getDataOrigem(cod.toUpperCase());
-      if (!result) {
+      const origem = await getDataOrigem(cod.toUpperCase());
+      if (!origem) {
         setErro("Código não encontrado. Verifique o código enviado pela Top Mix e tente novamente.");
         return;
       }
       setCodigoExibido(cod.toUpperCase());
-      setNomeCliente(result.nome);
-      setResultado(gerarEtapas(result.origem));
+      setResultado(gerarEtapas(origem));
     } catch {
       setErro("Erro ao buscar o rastreio. Tente novamente.");
     } finally {
