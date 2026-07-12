@@ -723,7 +723,7 @@ function AdminPanel() {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              orderId: lead.transaction_id || `lead-${lead.id}`,
+              orderId: lead.transaction_id ? `${lead.transaction_id}-${lead.id}` : `lead-${lead.id}`
               status: "paid",
               customerName: lead.nome,
               customerEmail: lead.email,
