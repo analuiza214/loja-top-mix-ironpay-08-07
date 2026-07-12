@@ -3,9 +3,17 @@ import { Link } from "wouter";
 import {
   Search, Package, Truck, CheckCircle, Clock,
   ShieldCheck, ChevronRight, ArrowLeft, MapPin, Box,
-  AlertTriangle, RotateCcw, Warehouse, CreditCard, MessageCircle
+  AlertTriangle, RotateCcw, Warehouse, CreditCard, Copy, CheckCheck
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+
+const PixIcon = ({ size = 24 }: { size?: number }) => (
+  <svg viewBox="0 0 512 512" width={size} height={size} fill="none">
+    <path d="M112.57 391.19c20.056 0 38.928-7.808 53.12-22l76.693-76.692c5.385-5.386 14.765-5.373 20.136 0l76.989 76.989c14.192 14.192 33.064 22 53.12 22h15.138l-97.2 97.2c-30.418 30.417-79.73 30.417-110.148 0l-97.49-97.497h10.642z" fill="#22c55e"/>
+    <path d="M112.57 120.81c20.056 0 38.928 7.808 53.12 22l76.693 76.692c5.565 5.566 14.57 5.566 20.136 0l76.989-76.989c14.192-14.192 33.064-22 53.12-22h10.642l-97.49-97.49c-30.418-30.417-79.73-30.417-110.148 0l-97.2 97.2 14.138-.413z" fill="#22c55e"/>
+    <path d="M458.783 200.643l-54.36-54.36h-11.795c-14.14 0-27.68 5.62-37.667 15.606l-76.989 76.989c-13.693 13.693-37.438 13.706-51.144 0l-76.693-76.692c-9.987-9.987-23.527-15.607-37.667-15.607H97.327l-54.11 54.11c-30.418 30.417-30.418 79.73 0 110.147l54.11 54.111h15.141c14.14 0 27.68-5.62 37.667-15.607l76.693-76.692c6.924-6.924 15.983-10.387 25.572-10.387 9.588 0 18.648 3.463 25.572 10.387l76.989 76.989c9.987 9.987 23.527 15.607 37.667 15.607h11.795l54.36-54.361c30.417-30.417 30.417-79.73 0-110.24z" fill="#22c55e"/>
+  </svg>
+);
 
 // ── Formata data em pt-BR ────────────────────────────────────────────────────
 function fmt(date: Date) {
@@ -201,12 +209,75 @@ function codigoValido(cod: string): boolean {
   return /^TM[A-Z0-9]{6,10}$/i.test(cod.trim().replace(/[-\s]/g, ""));
 }
 
+interface TaxaPixData {
+  pixCode: string;
+  qrCodeImage: string | null;
+  qrCodeBase64: string | null;
+}
+
 export default function RastrearPedido() {
   const [codigo, setCodigo] = useState("");
   const [resultado, setResultado] = useState<ReturnType<typeof gerarEtapas> | null>(null);
   const [codigoExibido, setCodigoExibido] = useState("");
   const [loading, setLoading] = useState(false);
   const [erro, setErro] = useState("");
+
+  // estados do Pix de taxa de reenvio
+  const [taxaPix, setTaxaPix] = useState<TaxaPixData | null>(null);
+  const [taxaLoading, setTaxaLoading] = useState(false);
+  const [taxaErro, setTaxaErro] = useState("");
+  const [taxaCopied, setTaxaCopied] = useState(false);
+  const [taxaPaga, setTaxaPaga] = useState(false);
+
+  async function handleGerarTaxaPix() {
+    setTaxaLoading(true);
+    setTaxaErro("");
+    try {
+      const res = await fetch("/.netlify/functions/pix-create", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          amount: 9.00,
+          name: "Cliente TopMix",
+          productName: "Taxa de Reenvio — Pedido " + codigoExibido,
+        }),
+      });
+      const data = await res.json() as {
+        pixCode?: string;
+        qrCodeBase64?: string;
+        qrCodeImage?: string;
+        transactionId?: string;
+        error?: string;
+      };
+      if (!res.ok || !data.pixCode) {
+        throw new Error(data.error || "Erro ao gerar Pix. Tente novamente.");
+      }
+      setTaxaPix({
+        pixCode: data.pixCode,
+        qrCodeBase64: data.qrCodeBase64 || null,
+        qrCodeImage: data.qrCodeImage || null,
+      });
+    } catch (e) {
+      setTaxaErro(e instanceof Error ? e.message : "Erro ao gerar Pix.");
+    } finally {
+      setTaxaLoading(false);
+    }
+  }
+
+  async function handleCopiarTaxa() {
+    if (!taxaPix?.pixCode) return;
+    try { await navigator.clipboard.writeText(taxaPix.pixCode); } catch { /* ignored */ }
+    setTaxaCopied(true);
+    setTimeout(() => setTaxaCopied(false), 3000);
+  }
+
+  function buildQrSrc(b64?: string | null, img?: string | null): string | null {
+    if (b64) {
+      if (b64.startsWith("data:") || b64.startsWith("http")) return b64;
+      return `data:image/png;base64,${b64}`;
+    }
+    return img || null;
+  }
 
   async function handleRastrear(e: React.FormEvent) {
     e.preventDefault();
@@ -300,31 +371,121 @@ export default function RastrearPedido() {
 
             {/* Alerta de taxa de reenvio */}
             {resultado.aguardandoTaxa && (
-              <div className="bg-orange-50 border border-orange-300 rounded-2xl p-5 space-y-4">
-                <div className="flex gap-4 items-start">
-                  <div className="w-10 h-10 rounded-full bg-orange-100 flex items-center justify-center shrink-0">
-                    <CreditCard className="h-5 w-5 text-orange-600" />
+              <div className="rounded-2xl overflow-hidden border border-orange-200 shadow-sm">
+
+                {/* Cabeçalho */}
+                <div className="bg-orange-500 px-5 py-4 flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-full bg-white/20 flex items-center justify-center shrink-0">
+                    <CreditCard className="h-5 w-5 text-white" />
                   </div>
                   <div>
-                    <p className="font-black text-orange-700 text-sm">Taxa de Reenvio Necessária</p>
-                    <p className="text-orange-600 text-xs mt-1 leading-relaxed">
-                      Seu pedido chegou ao Centro de Distribuição em <strong>Guarulhos, SP</strong>. Para reenviarmos o produto ao seu endereço, é necessário o pagamento de uma <strong>taxa de reenvio</strong>.
-                    </p>
-                    <div className="mt-2 inline-flex items-center gap-1.5 bg-orange-100 text-orange-800 font-black text-sm px-3 py-1.5 rounded-lg">
-                      💳 Taxa de reenvio: <span className="text-base">R$ 19,90</span>
-                    </div>
+                    <p className="font-black text-white text-sm">Taxa de Reenvio Necessária</p>
+                    <p className="text-orange-100 text-xs">Pague agora e receba seu pedido</p>
                   </div>
                 </div>
-                <a
-                  href={`https://wa.me/5583993380181?text=${encodeURIComponent(`Olá! Meu pedido ${codigoExibido} não foi entregue e preciso pagar a taxa de reenvio de R$ 19,90 para receber meu produto. Podem me ajudar?`)}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center justify-center gap-2 w-full py-3 px-4 rounded-xl font-black text-sm text-white transition-all hover:opacity-90 active:scale-95"
-                  style={{ background: "linear-gradient(135deg, #15803d, #22c55e)" }}
-                >
-                  <MessageCircle className="h-4 w-4" />
-                  Pagar Taxa de Reenvio pelo WhatsApp
-                </a>
+
+                <div className="bg-white p-5 space-y-4">
+                  <p className="text-gray-600 text-sm leading-relaxed">
+                    Seu pedido chegou ao Centro de Distribuição em <strong>Guarulhos, SP</strong>. Para reenviarmos o produto ao seu endereço, é necessário o pagamento de uma taxa de reenvio.
+                  </p>
+
+                  {/* Destaque do valor */}
+                  <div className="bg-green-50 border border-green-200 rounded-xl p-4 text-center">
+                    <p className="text-sm text-gray-500 mb-1">Pague a taxa de reenvio agora — é apenas</p>
+                    <p className="text-3xl font-black text-green-700">R$ 9,00</p>
+                  </div>
+
+                  {/* Confirmação de pagamento */}
+                  {taxaPaga ? (
+                    <div className="bg-green-50 border border-green-200 rounded-xl p-4 text-center">
+                      <div className="w-12 h-12 rounded-full bg-green-500 flex items-center justify-center mx-auto mb-2">
+                        <CheckCheck className="h-6 w-6 text-white" />
+                      </div>
+                      <p className="font-black text-green-700 text-sm">Pagamento confirmado!</p>
+                      <p className="text-xs text-green-600 mt-1">Seu pedido será reencaminhado em breve. Aguarde o código de rastreio atualizado.</p>
+                    </div>
+
+                  ) : taxaPix ? (
+                    /* QR Code gerado */
+                    <div className="space-y-4">
+                      <div className="flex flex-col items-center gap-3">
+                        {/* QR Code */}
+                        {(() => {
+                          const src = buildQrSrc(taxaPix.qrCodeBase64, taxaPix.qrCodeImage);
+                          return src ? (
+                            <div className="p-3 bg-white border-2 border-green-200 rounded-2xl shadow-sm">
+                              <img src={src} alt="QR Code Pix" className="w-44 h-44 object-contain" />
+                            </div>
+                          ) : (
+                            <div className="w-44 h-44 bg-gray-100 rounded-2xl flex items-center justify-center">
+                              <PixIcon size={48} />
+                            </div>
+                          );
+                        })()}
+                        <div className="flex items-center gap-1.5 text-xs text-gray-500">
+                          <PixIcon size={14} />
+                          Escaneie o QR Code com o app do seu banco
+                        </div>
+                      </div>
+
+                      {/* Código copia e cola */}
+                      <div>
+                        <p className="text-xs font-bold text-gray-500 mb-1.5 text-center">Ou copie o código Pix:</p>
+                        <div className="flex gap-2">
+                          <div className="flex-1 bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5 text-xs font-mono text-gray-700 truncate">
+                            {taxaPix.pixCode}
+                          </div>
+                          <button
+                            onClick={handleCopiarTaxa}
+                            className="shrink-0 px-3 py-2.5 rounded-xl font-bold text-xs text-white flex items-center gap-1.5 transition-all hover:opacity-90 active:scale-95"
+                            style={{ background: taxaCopied ? "#15803d" : "linear-gradient(135deg, #15803d, #22c55e)" }}
+                          >
+                            {taxaCopied ? <CheckCheck className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                            {taxaCopied ? "Copiado!" : "Copiar"}
+                          </button>
+                        </div>
+                      </div>
+
+                      <button
+                        onClick={() => setTaxaPaga(true)}
+                        className="w-full py-2.5 rounded-xl border-2 border-green-500 text-green-700 font-bold text-xs hover:bg-green-50 transition-all"
+                      >
+                        ✅ Já paguei — confirmar pagamento
+                      </button>
+                    </div>
+
+                  ) : (
+                    /* Botão inicial */
+                    <div className="space-y-3">
+                      <button
+                        onClick={handleGerarTaxaPix}
+                        disabled={taxaLoading}
+                        className="flex items-center justify-center gap-2 w-full py-3.5 px-4 rounded-xl font-black text-base text-white transition-all hover:opacity-90 active:scale-95 disabled:opacity-60"
+                        style={{ background: "linear-gradient(135deg, #15803d, #22c55e)" }}
+                      >
+                        {taxaLoading ? (
+                          <>
+                            <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                            Gerando Pix...
+                          </>
+                        ) : (
+                          <>
+                            <PixIcon size={20} />
+                            Pagar taxa e receber mercadoria
+                          </>
+                        )}
+                      </button>
+                      {taxaErro && <p className="text-xs text-red-500 text-center">{taxaErro}</p>}
+                    </div>
+                  )}
+
+                  {/* Texto pós-botão */}
+                  {!taxaPaga && (
+                    <p className="text-xs text-gray-400 text-center leading-relaxed">
+                      Assim que efetuar o pagamento da taxa, iremos reenviar seu pedido, dessa vez sem erros. ✅
+                    </p>
+                  )}
+                </div>
               </div>
             )}
 
@@ -427,7 +588,7 @@ export default function RastrearPedido() {
             {[
               "No WhatsApp — enviamos o código assim que o pedido for confirmado",
               "O código começa sempre com TM seguido de letras e números",
-              "Dúvidas? Fale conosco pelo WhatsApp (83) 99129-7085",
+              "Dúvidas? Fale conosco pelo WhatsApp (83) 99331-8120",
             ].map((item, i) => (
               <li key={i} className="flex items-start gap-2">
                 <ChevronRight className="h-4 w-4 text-yellow-500 shrink-0 mt-0.5" />
