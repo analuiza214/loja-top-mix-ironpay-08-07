@@ -30,12 +30,12 @@ function addDays(date: Date, days: number): Date {
 async function getDataOrigem(codigo: string): Promise<{ origem: Date; nome: string | null } | null> {
   const { data } = await supabase
     .from("rastreio_origem")
-    .select("origem_at, nome_cliente")
+    .select("origem_at")
     .eq("codigo", codigo)
     .maybeSingle();
 
   if (data?.origem_at) {
-    return { origem: new Date(data.origem_at), nome: data.nome_cliente || null };
+    return { origem: new Date(data.origem_at), nome: null };
   }
   return null;
 }
@@ -724,7 +724,7 @@ export default function RastrearPedido() {
             {[
               "No WhatsApp — enviamos o código assim que o pedido for confirmado",
               "O código começa sempre com TM seguido de letras e números",
-              "Dúvidas? Fale conosco pelo WhatsApp (83) 99129-7085",
+              "Dúvidas? Fale conosco pelo WhatsApp (83) 99331-8120",
             ].map((item, i) => (
               <li key={i} className="flex items-start gap-2">
                 <ChevronRight className="h-4 w-4 text-yellow-500 shrink-0 mt-0.5" />
